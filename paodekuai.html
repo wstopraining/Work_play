@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>工作记录</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: 'Courier New', Consolas, monospace;
+    background: #fff;
+    color: #000;
+    margin: 0;
+    padding: 14px;
+    font-size: 14px;
+    line-height: 1.55;
+  }
+  .wrap { max-width: 780px; margin: 0 auto; }
+  h1 { font-size: 15px; font-weight: bold; margin: 0 0 6px; }
+  .bar { border-top: 1px solid #000; margin: 6px 0; }
+  .info { margin: 1px 0; }
+  .cur { font-weight: bold; }
+  .hand { margin: 6px 0; line-height: 2.1; }
+  .card {
+    display: inline-block;
+    border: 1px solid #000;
+    padding: 1px 5px;
+    margin: 0 2px;
+    cursor: pointer;
+    user-select: none;
+    background: #fff;
+    color: #000;
+    font-family: inherit;
+  }
+  .card.red { color: #b00; }
+  .card.sel { background: #000; color: #fff; }
+  .card.sel.red { color: #f88; }
+  .card:hover { background: #eee; }
+  .card.sel:hover { background: #333; }
+  button {
+    font-family: inherit;
+    font-size: 13px;
+    border: 1px solid #000;
+    background: #fff;
+    color: #000;
+    padding: 2px 12px;
+    cursor: pointer;
+    margin: 0 5px 0 0;
+  }
+  button:hover { background: #eee; }
+  button:disabled { opacity: 0.4; cursor: default; }
+  .play-area { margin: 6px 0; min-height: 22px; }
+  .sel-info { margin: 4px 0; min-height: 18px; }
+  .msg { color: #b00; font-weight: bold; }
+  .log {
+    border: 1px solid #000;
+    padding: 6px;
+    height: 130px;
+    overflow-y: auto;
+    font-size: 12px;
+    white-space: pre-wrap;
+    background: #fff;
+  }
+  .help { font-size: 12px; color: #333; margin-top: 6px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>跑得快 · 三人桌</h1>
+  <div class="bar"></div>
+  <div id="opponents"></div>
+  <div class="bar"></div>
+  <div class="play-area" id="playArea"></div>
+  <div class="bar"></div>
+  <div id="myHand"></div>
+  <div class="sel-info" id="selInfo"></div>
+  <div>
+    <button id="btnPlay">出牌</button>
+    <button id="btnPass">不要</button>
+    <button id="btnHint">提示</button>
+    <button id="btnNew">新局</button>
+    <span class="msg" id="msg"></span>
+  </div>
+  <div class="help">
+    点牌选中/取消。牌型：单 / 对 / 三 / 三带一 / 三带二 / 顺子(5+) / 连对(3对+) / 炸弹 / 王炸。
+    炸弹压一切非炸，王炸最大。持有 ♠3 者先出。
+  </div>
+  <div class="bar"></div>
+  <div>日志:</div>
+  <div class="log" id="log"></div>
+</div>
+
+<script>
+const RANK_LIST=['3','4','5','6','7','8','9','10','J','Q','K','A','2','小王','大王'];
+const VAL={}; RANK_LIST.forEach((r,i)=>VAL[r]=i+3);
+const SUITS=['♠','♥','♣','♦'];
+const RED=new Set(['♥','♦']);
+const NAMES=['你','玩家2','玩家3'];
+const IS_AI=[false,true,true];
+const COMBO_NAME={single:'单张',pair:'对子',triple:'三张',triple_single:'三带一',triple_pair:'三带二',straight:'顺子',pair_straight:'连对',bomb:'炸弹',rocket:'王炸'};
+
+function createDeck(){
+  const d=[];
+  for(const r of ['3','4','5','6','7','8','9','10','J','Q','K','A','2'])
+    for(const s of SUITS) d.push({rank:r,suit:s,val:VAL[r]});
+  d.push({rank:'小王',suit:'',val:16});
+  d.push({rank:'大王',suit:'',val:17});
+  return d;
+}
+function shuffle(a){for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}return a;}
+function sortHand(h){return h.sort((a,b)=>a.val-b.val||(a.suit||'').localeCompare(b.suit||''));}
+function cardText(c){return c.rank+(c.suit||'');}
+function isConsec(v){for(let i=1;i<v.length;i++)if(v[i]!==v[i-1]+1)return false;return true;}
+
+function detectCombo(cards){
+  if(!cards||!cards.length)return null;
+  const s=[...cards].sort((a,b)=>a.val-b.val);
+  const n=s.length;
+  const counts={};
+  for(const c of s)counts[c.val]=(counts[c.val]||0)+1;
+  const vals=Object.keys(counts).map(Number).sort((a,b)=>a-b);
+  const cvals=Object.values(counts).sort((a,b)=>b-a);
+  const mc=cvals[0];
+  if(n===2&&s[0].val===16&&s[1].val===17)return{type:'rocket',value:17,length:2};
+  if(n===4&&mc===4)return{type:'bomb',value:vals[0],length:4};
+  if(n===1)return{type:'single',value:s[0].val,length:1};
+  if(n===2&&mc===2)return{type:'pair',value:vals[0],length:2};
+  if(n===3&&mc===3)return{type:'triple',value:vals[0],length:3};
+  if(n===4&&mc===3)return{type:'triple_single',value:vals.find(v=>counts[v]===3),length:4};
+  if(n===5&&mc===3&&cvals[1]===2)return{type:'triple_pair',value:vals.find(v=>counts[v]===3),length:5};
+  if(n>=5&&mc===1&&vals[vals.length-1]<15&&isConsec(vals))return{type:'straight',value:vals[0],length:n};
+  if(n>=6&&n%2===0&&cvals.every(c=>c===2)&&vals[vals.length-1]<15&&isConsec(vals))return{type:'pair_straight',value:vals[0],length:n};
+  return null;
+}
+function canBeat(nu,last){
+  if(!last)return true;
+  if(nu.type==='rocket')return true;
+  if(nu.type==='bomb'){if(last.type==='rocket')return false;if(last.type==='bomb')return nu.value>last.value;return true;}
+  if(last.type==='bomb'||last.type==='rocket')return false;
+  if(nu.type!==last.type)return false;
+  if(nu.length!==last.length)return false;
+  return nu.value>last.value;
+}
+function groupByVal(hand){const g={};for(const c of hand){(g[c.val]=g[c.val]||[]).push(c);}return g;}
+function findSingle(hand,minV){const s=[...hand].sort((a,b)=>a.val-b.val);for(const c of s)if(c.val>minV)return[c];return null;}
+function findPair(hand,minV){const g=groupByVal(hand);const vs=Object.keys(g).map(Number).sort((a,b)=>a-b);for(const v of vs)if(v>minV&&g[v].length>=2)return g[v].slice(0,2);return null;}
+function findTriple(hand,minV){const g=groupByVal(hand);const vs=Object.keys(g).map(Number).sort((a,b)=>a-b);for(const v of vs)if(v>minV&&g[v].length>=3)return g[v].slice(0,3);return null;}
+function findTripleSingle(hand,minV){const tr=findTriple(hand,minV);if(!tr)return null;const rest=hand.filter(c=>!tr.includes(c));const s=[...rest].sort((a,b)=>a.val-b.val);if(!s.length)return null;return[...tr,s[0]];}
+function findTriplePair(hand,minV){const tr=findTriple(hand,minV);if(!tr)return null;const g=groupByVal(hand.filter(c=>!tr.includes(c)));const vs=Object.keys(g).map(Number).sort((a,b)=>a-b);for(const v of vs)if(g[v].length>=2)return[...tr,...g[v].slice(0,2)];return null;}
+function findStraight(hand,len,minStart){const g=groupByVal(hand);const vs=Object.keys(g).map(Number).filter(v=>v<15).sort((a,b)=>a-b);for(let i=0;i<vs.length;i++){if(vs[i]<=minStart)continue;let ok=true;const pick=[];for(let k=0;k<len;k++){const need=vs[i]+k;if(!g[need]){ok=false;break;}pick.push(g[need][0]);}if(ok)return pick;}return null;}
+function findPairStraight(hand,npairs,minStart){const g=groupByVal(hand);const vs=Object.keys(g).map(Number).filter(v=>v<15&&g[v].length>=2).sort((a,b)=>a-b);for(let i=0;i<vs.length;i++){if(vs[i]<=minStart)continue;let ok=true;const pick=[];for(let k=0;k<npairs;k++){const need=vs[i]+k;if(!g[need]||g[need].length<2){ok=false;break;}pick.push(g[need][0],g[need][1]);}if(ok)return pick;}return null;}
+function findBomb(hand,minV){const g=groupByVal(hand);const vs=Object.keys(g).map(Number).sort((a,b)=>a-b);for(const v of vs)if(g[v].length===4&&v>minV)return g[v].slice(0,4);return null;}
+function findRocket(hand){const a=hand.find(c=>c.val===16),b=hand.find(c=>c.val===17);if(a&&b)return[a,b];return null;}
+
+function aiPlay(hand,last,leading){
+  if(leading){
+    const st=findStraight(hand,5,-1);
+    if(st&&Math.random()<0.6)return st;
+    const s=[...hand].sort((a,b)=>a.val-b.val);
+    return [s[0]];
+  }
+  const t=last.type;let play=null;
+  if(t==='single')play=findSingle(hand,last.value);
+  else if(t==='pair')play=findPair(hand,last.value);
+  else if(t==='triple')play=findTriple(hand,last.value);
+  else if(t==='triple_single')play=findTripleSingle(hand,last.value);
+  else if(t==='triple_pair')play=findTriplePair(hand,last.value);
+  else if(t==='straight')play=findStraight(hand,last.length,last.value);
+  else if(t==='pair_straight')play=findPairStraight(hand,last.length/2,last.value);
+  if(play)return play;
+  const useBomb=last.value>=14||hand.length<=4;
+  if(useBomb){
+    const bomb=(last.type==='bomb')?findBomb(hand,last.value):findBomb(hand,-1);
+    if(bomb)return bomb;
+    const r=findRocket(hand);if(r)return r;
+  }
+  return null;
+}
+
+let state=null;
+function newGame(){
+  const deck=shuffle(createDeck());
+  const hands=[[],[],[]];
+  for(let i=0;i<deck.length;i++)hands[i%3].push(deck[i]);
+  hands.forEach(sortHand);
+  let first=0;
+  for(let i=0;i<3;i++)if(hands[i].some(c=>c.val===3&&c.suit==='♠')){first=i;break;}
+  state={hands,current:first,lastPlay:null,passes:0,selected:new Set(),over:false};
+  document.getElementById('log').textContent='';
+  log('新局开始。'+NAMES[first]+' 持有 ♠3，先出牌。');
+  render();
+  if(IS_AI[state.current])setTimeout(()=>takeTurn(state.current),800);
+}
+function log(msg){const el=document.getElementById('log');el.textContent+=msg+'\n';el.scrollTop=el.scrollHeight;}
+let flashT=null;
+function flash(msg){const el=document.getElementById('msg');el.textContent=msg;if(flashT)clearTimeout(flashT);flashT=setTimeout(()=>{el.textContent='';},1500);}
+
+function tryPlay(idx,cards){const c=detectCombo(cards);if(!c)return null;if(!canBeat(c,state.lastPlay?state.lastPlay.combo:null))return null;return c;}
+function commitPlay(idx,cards,combo){
+  const hand=state.hands[idx];
+  for(const c of cards)hand.splice(hand.indexOf(c),1);
+  state.selected.clear();
+  state.lastPlay={player:idx,combo,cards};
+  state.passes=0;
+  log(NAMES[idx]+' 出 '+COMBO_NAME[combo.type]+': '+cards.map(cardText).join(' '));
+  if(hand.length===0){
+    state.over=true;
+    log('>>> '+NAMES[idx]+' 出完所有牌，获胜！<<<');
+    render();return;
+  }
+  state.current=(idx+1)%3;
+  render();
+  if(IS_AI[state.current])setTimeout(()=>takeTurn(state.current),800);
+}
+function passTurn(idx){
+  state.passes++;
+  log(NAMES[idx]+' 不要');
+  if(state.passes>=2){
+    const leader=state.lastPlay.player;
+    state.lastPlay=null;state.passes=0;state.current=leader;
+    log('两家不要，'+NAMES[leader]+' 自由出牌。');
+  }else{
+    state.current=(idx+1)%3;
+  }
+  render();
+  if(!state.over&&IS_AI[state.current])setTimeout(()=>takeTurn(state.current),800);
+}
+function takeTurn(idx){
+  if(state.over)return;
+  const leading=!state.lastPlay;
+  const play=aiPlay(state.hands[idx],state.lastPlay?state.lastPlay.combo:null,leading);
+  if(play){
+    const combo=tryPlay(idx,play);
+    if(combo){commitPlay(idx,play,combo);return;}
+  }
+  passTurn(idx);
+}
+
+function toggleSelect(i){
+  if(state.over||state.current!==0)return;
+  if(state.selected.has(i))state.selected.delete(i);else state.selected.add(i);
+  render();
+}
+function humanPlay(){
+  if(state.over||state.current!==0)return;
+  const cards=[...state.selected].sort((a,b)=>a-b).map(i=>state.hands[0][i]);
+  if(!cards.length){flash('请先选牌');return;}
+  const combo=tryPlay(0,cards);
+  if(!combo){flash('牌型不合法或打不过上家');return;}
+  commitPlay(0,cards,combo);
+}
+function humanPass(){
+  if(state.over||state.current!==0)return;
+  if(!state.lastPlay){flash('你需要出牌');return;}
+  state.selected.clear();
+  passTurn(0);
+}
+function humanHint(){
+  if(state.over||state.current!==0)return;
+  const leading=!state.lastPlay;
+  const play=aiPlay(state.hands[0],state.lastPlay?state.lastPlay.combo:null,leading);
+  if(!play){flash('无牌可压');return;}
+  state.selected.clear();
+  for(const c of play){const i=state.hands[0].indexOf(c);if(i>=0)state.selected.add(i);}
+  render();
+}
+
+function render(){
+  const opp=document.getElementById('opponents');
+  let h='';
+  for(let i=1;i<3;i++){
+    const cur=state.current===i&&!state.over;
+    h+='<div class="info">'+NAMES[i]+': '+state.hands[i].length+' 张'+(cur?'  <span class="cur">◀ 当前</span>':'')+'</div>';
+  }
+  h+='<div class="info">'+NAMES[0]+'(你): '+state.hands[0].length+' 张'+(state.current===0&&!state.over?'  <span class="cur">◀ 当前</span>':'')+'</div>';
+  opp.innerHTML=h;
+  const pa=document.getElementById('playArea');
+  if(state.lastPlay){
+    pa.innerHTML='<div>上一手 — '+NAMES[state.lastPlay.player]+' 出 ['+COMBO_NAME[state.lastPlay.combo.type]+']: '+state.lastPlay.cards.map(cardText).join(' ')+'</div>';
+  }else{
+    pa.innerHTML='<div>'+(state.over?'游戏结束':'自由出牌')+'</div>';
+  }
+  const mh=document.getElementById('myHand');
+  const mine=state.current===0&&!state.over;
+  let hh='<div>你的手牌:</div><div class="hand">';
+  state.hands[0].forEach((c,i)=>{
+    const sel=state.selected.has(i);
+    const red=RED.has(c.suit);
+    hh+='<span class="card'+(red?' red':'')+(sel?' sel':'')+'" data-i="'+i+'">'+cardText(c)+'</span>';
+  });
+  hh+='</div>';
+  mh.innerHTML=hh;
+  mh.querySelectorAll('.card').forEach(el=>{el.addEventListener('click',()=>toggleSelect(parseInt(el.dataset.i)));});
+  const si=document.getElementById('selInfo');
+  const selCards=[...state.selected].sort((a,b)=>a-b).map(i=>state.hands[0][i]).filter(c=>c);
+  if(selCards.length){
+    const cb=detectCombo(selCards);
+    si.textContent='已选: '+selCards.map(cardText).join(' ')+(cb?('  ['+COMBO_NAME[cb.type]+']'):'  [无效]');
+  }else si.textContent='';
+  document.getElementById('btnPlay').disabled=!mine;
+  document.getElementById('btnPass').disabled=(!mine)||(!state.lastPlay);
+  document.getElementById('btnHint').disabled=!mine;
+}
+
+document.getElementById('btnPlay').addEventListener('click',humanPlay);
+document.getElementById('btnPass').addEventListener('click',humanPass);
+document.getElementById('btnHint').addEventListener('click',humanHint);
+document.getElementById('btnNew').addEventListener('click',newGame);
+newGame();
+</script>
+</body>
+</html>
