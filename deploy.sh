@@ -34,8 +34,7 @@ cp "$(dirname "$0")/paodekuai.html" /var/www/paodekuai/index.html
 
 # 5. 配置 nginx
 echo "[5/5] 配置 nginx..."
-cat > /etc/nginx/sites-available/paodekuai << 'NGINX'
-server {
+NGINX_CONF='server {
     listen 80;
     server_name _;
 
@@ -56,11 +55,21 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_read_timeout 86400;
     }
-}
-NGINX
+}'
 
-ln -sf /etc/nginx/sites-available/paodekuai /etc/nginx/sites-enabled/paodekuai
-rm -f /etc/nginx/sites-enabled/default
+# 兼容不同 nginx 目录结构
+if [ -d /etc/nginx/sites-available ]; then
+  echo "$NGINX_CONF" > /etc/nginx/sites-available/paodekuai
+  ln -sf /etc/nginx/sites-available/paodekuai /etc/nginx/sites-enabled/paodekuai
+  rm -f /etc/nginx/sites-enabled/default
+elif [ -d /etc/nginx/conf.d ]; then
+  echo "$NGINX_CONF" > /etc/nginx/conf.d/paodekuai.conf
+else
+  mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled
+  echo "$NGINX_CONF" > /etc/nginx/sites-available/paodekuai
+  ln -sf /etc/nginx/sites-available/paodekuai /etc/nginx/sites-enabled/paodekuai
+fi
+
 nginx -t && systemctl reload nginx
 
 # 6. 创建 peerjs-server systemd 服务
