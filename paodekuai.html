@@ -123,6 +123,18 @@ let N_SLOTS=3;
 let GAME_MODE='3'; // '2' | '3' | '4'
 const COMBO_NAME={single:'单张',pair:'对子',triple:'三张',triple_single:'三带一',triple_pair:'三带二',straight:'顺子',pair_straight:'连对',bomb:'炸弹',rocket:'王炸'};
 
+// PeerJS 配置：本地开发用公共服务器，部署后用同源自建信令服务器
+function makePeer(customId){
+  const loc=window.location;
+  let opts;
+  if(loc.protocol==='file:' || loc.hostname==='localhost' || loc.hostname==='127.0.0.1'){
+    opts={debug:1};
+  } else {
+    opts={host:loc.hostname, port:loc.port||(loc.protocol==='https:'?443:80), path:'/peerjs', debug:1, secure:loc.protocol==='https:'};
+  }
+  return new Peer(customId,opts);
+}
+
 function createDeck(){
   const d=[];
   for(const r of ['3','4','5','6','7','8','9','10','J','Q','K','A','2'])
@@ -681,7 +693,7 @@ document.getElementById('btnCreate').addEventListener('click',()=>{
   lobby.roomId=rid;
   if(lobby.peer){try{lobby.peer.destroy();}catch(e){}}
   const hostPid='pdk_'+rid+'_host_0000';
-  lobby.peer=new Peer(hostPid,{debug:1});
+  lobby.peer=makePeer(hostPid);
   setPeerStatus('连接中...');
   lobby.peer.on('open',(id)=>{
     lobby.host=true;lobby.hostId=id;
@@ -710,7 +722,7 @@ document.getElementById('btnJoin').addEventListener('click',()=>{
   if(rid.length<3){flash('请输入房间号');return;}
   lobby.roomId=rid;
   if(lobby.peer){try{lobby.peer.destroy();}catch(e){}}
-  lobby.peer=new Peer('pdk_'+rid+'_cli_'+randId(6),{debug:1});
+  lobby.peer=makePeer('pdk_'+rid+'_cli_'+randId(6));
   setPeerStatus('连接中...');
   lobby.host=false;lobby.hostId=null;lobby.players={};
   lobby.peer.on('open',(id)=>{
