@@ -1,6 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
-<head>
+<html lang="zh-CN"><head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>工作记录</title>
@@ -15,11 +14,17 @@
     font-size: 14px;
     line-height: 1.55;
   }
-  .wrap { max-width: 780px; margin: 0 auto; }
+  .wrap { max-width: 820px; margin: 0 auto; }
   h1 { font-size: 15px; font-weight: bold; margin: 0 0 6px; }
+  h2 { font-size: 14px; font-weight: bold; margin: 8px 0 4px; }
   .bar { border-top: 1px solid #000; margin: 6px 0; }
+  .row { margin: 4px 0; }
   .info { margin: 1px 0; }
   .cur { font-weight: bold; }
+  .me { font-weight: bold; }
+  .teamA { color: #06c; }
+  .teamB { color: #b00; }
+  .lone { color: #060; font-weight: bold; }
   .hand { margin: 6px 0; line-height: 2.1; }
   .card {
     display: inline-block;
@@ -52,51 +57,70 @@
   .play-area { margin: 6px 0; min-height: 22px; }
   .sel-info { margin: 4px 0; min-height: 18px; }
   .msg { color: #b00; font-weight: bold; }
-  .log {
+  input[type=text], select {
+    font-family: inherit;
+    font-size: 13px;
     border: 1px solid #000;
-    padding: 6px;
-    height: 130px;
-    overflow-y: auto;
-    font-size: 12px;
-    white-space: pre-wrap;
     background: #fff;
+    color: #000;
+    padding: 2px 6px;
   }
-  .help { font-size: 12px; color: #333; margin-top: 6px; }
+  .help { font-size: 12px; color: #333; }
 </style>
 </head>
 <body>
 <div class="wrap">
-  <h1>跑得快 · 三人桌</h1>
+  <h1>跑得快 · 多人桌</h1>
   <div class="bar"></div>
-  <div id="opponents"></div>
-  <div class="bar"></div>
-  <div class="play-area" id="playArea"></div>
-  <div class="bar"></div>
-  <div id="myHand"></div>
-  <div class="sel-info" id="selInfo"></div>
-  <div>
-    <button id="btnPlay">出牌</button>
-    <button id="btnPass">不要</button>
-    <button id="btnHint">提示</button>
-    <button id="btnNew">新局</button>
-    <span class="msg" id="msg"></span>
+
+  <div id="lobby">
+    <h2>大厅</h2>
+    <div class="row">模式:
+      <select id="modeSel">
+        <option value="2">2人 (1v1)</option>
+        <option value="3" selected="">3人 (找朋友: 持♠3者独狼 vs 其余2人)</option>
+        <option value="4">4人 (对家组队: 位置0↔2 vs 1↔3)</option>
+      </select>
+    </div>
+    <div class="row">房间号:
+      <input type="text" id="roomId" maxlength="12" value="" placeholder="3-12位字符">
+      <button id="btnCreate">创建房间(房主)</button>
+      <button id="btnJoin">加入房间</button>
+    </div>
+    <div class="row" id="peerStatus">未连接</div>
+    <div class="row">玩家列表:</div>
+    <div id="playerList"><div class="help">尚未加入房间</div></div>
+    <div class="row">
+      <button id="btnReady" disabled="">准备</button>
+      <button id="btnStart" disabled="" title="">开始游戏(仅房主,全部准备后)</button>
+    </div>
   </div>
-  <div class="help">
-    点牌选中/取消。牌型：单 / 对 / 三 / 三带一 / 三带二 / 顺子(5+) / 连对(3对+) / 炸弹 / 王炸。
-    炸弹压一切非炸，王炸最大。持有 ♠3 者先出。
+
+  <div id="game" style="display:none">
+    <div id="opponents"></div>
+    <div class="bar"></div>
+    <div class="play-area" id="playArea"></div>
+    <div class="bar"></div>
+    <div id="myHand"></div>
+    <div class="sel-info" id="selInfo"></div>
+    <div>
+      <button id="btnPlay">出牌</button>
+      <button id="btnPass">不要</button>
+      <button id="btnHint">提示</button>
+      <button id="btnBack">返回大厅</button>
+      <span class="msg" id="msg"></span>
+    </div>
   </div>
-  <div class="bar"></div>
-  <div>日志:</div>
-  <div class="log" id="log"></div>
 </div>
 
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <script>
 const RANK_LIST=['3','4','5','6','7','8','9','10','J','Q','K','A','2','小王','大王'];
 const VAL={}; RANK_LIST.forEach((r,i)=>VAL[r]=i+3);
 const SUITS=['♠','♥','♣','♦'];
 const RED=new Set(['♥','♦']);
-const NAMES=['你','玩家2','玩家3'];
-const IS_AI=[false,true,true];
+let N_SLOTS=3;
+let GAME_MODE='3'; // '2' | '3' | '4'
 const COMBO_NAME={single:'单张',pair:'对子',triple:'三张',triple_single:'三带一',triple_pair:'三带二',straight:'顺子',pair_straight:'连对',bomb:'炸弹',rocket:'王炸'};
 
 function createDeck(){
@@ -151,13 +175,11 @@ function findStraight(hand,len,minStart){const g=groupByVal(hand);const vs=Objec
 function findPairStraight(hand,npairs,minStart){const g=groupByVal(hand);const vs=Object.keys(g).map(Number).filter(v=>v<15&&g[v].length>=2).sort((a,b)=>a-b);for(let i=0;i<vs.length;i++){if(vs[i]<=minStart)continue;let ok=true;const pick=[];for(let k=0;k<npairs;k++){const need=vs[i]+k;if(!g[need]||g[need].length<2){ok=false;break;}pick.push(g[need][0],g[need][1]);}if(ok)return pick;}return null;}
 function findBomb(hand,minV){const g=groupByVal(hand);const vs=Object.keys(g).map(Number).sort((a,b)=>a-b);for(const v of vs)if(g[v].length===4&&v>minV)return g[v].slice(0,4);return null;}
 function findRocket(hand){const a=hand.find(c=>c.val===16),b=hand.find(c=>c.val===17);if(a&&b)return[a,b];return null;}
-
-function aiPlay(hand,last,leading){
+function findHint(hand,last,leading){
   if(leading){
-    const st=findStraight(hand,5,-1);
-    if(st&&Math.random()<0.6)return st;
     const s=[...hand].sort((a,b)=>a.val-b.val);
-    return [s[0]];
+    if(s.length)return [s[0]];
+    return null;
   }
   const t=last.type;let play=null;
   if(t==='single')play=findSingle(hand,last.value);
@@ -168,122 +190,380 @@ function aiPlay(hand,last,leading){
   else if(t==='straight')play=findStraight(hand,last.length,last.value);
   else if(t==='pair_straight')play=findPairStraight(hand,last.length/2,last.value);
   if(play)return play;
-  const useBomb=last.value>=14||hand.length<=4;
-  if(useBomb){
-    const bomb=(last.type==='bomb')?findBomb(hand,last.value):findBomb(hand,-1);
-    if(bomb)return bomb;
-    const r=findRocket(hand);if(r)return r;
+  const bomb=(last.type==='bomb')?findBomb(hand,last.value):findBomb(hand,-1);
+  if(bomb)return bomb;
+  return findRocket(hand);
+}
+
+// ===== 组队规则 =====
+let loneWolfSlot=null; // 3人模式下持♠3的slot索引（独狼）
+function assignTeams(hands){
+  loneWolfSlot=null;
+  if(GAME_MODE==='3'){
+    for(let i=0;i<3;i++){
+      if(hands[i].some(c=>c.val===3&&c.suit==='♠')){loneWolfSlot=i;break;}
+    }
   }
-  return null;
+}
+// 返回玩家 i 所属队伍 ID:  'A' | 'B'
+// - 2人: 0='A', 1='B' (1v1各自为战)
+// - 3人: loneWolf='A'(独狼1人队), 其他='B'(2人组)
+// - 4人: 偶数位置='A' (0,2), 奇数位置='B' (1,3)
+function teamOf(i){
+  if(GAME_MODE==='2')return (i===0)?'A':'B';
+  if(GAME_MODE==='3')return (i===loneWolfSlot)?'A':'B';
+  return (i%2===0)?'A':'B';
+}
+function teamLabel(i){
+  if(GAME_MODE==='2')return teamOf(i)+'队';
+  if(GAME_MODE==='3')return (i===loneWolfSlot)?'独狼':'队友组';
+  return teamOf(i)+'队';
 }
 
+// ===== 游戏状态 (host 权威) =====
 let state=null;
-function newGame(){
-  const deck=shuffle(createDeck());
-  const hands=[[],[],[]];
-  for(let i=0;i<deck.length;i++)hands[i%3].push(deck[i]);
-  hands.forEach(sortHand);
-  let first=0;
-  for(let i=0;i<3;i++)if(hands[i].some(c=>c.val===3&&c.suit==='♠')){first=i;break;}
-  state={hands,current:first,lastPlay:null,passes:0,selected:new Set(),over:false};
-  document.getElementById('log').textContent='';
-  log('新局开始。'+NAMES[first]+' 持有 ♠3，先出牌。');
-  render();
-  if(IS_AI[state.current])setTimeout(()=>takeTurn(state.current),800);
+function serializeState(s){
+  return {
+    hands: s.hands.map(h=>h.map(c=>({rank:c.rank,suit:c.suit,val:c.val}))),
+    current:s.current,
+    lastPlay:s.lastPlay?{
+      player:s.lastPlay.player,
+      combo:s.lastPlay.combo,
+      cards:s.lastPlay.cards.map(c=>({rank:c.rank,suit:c.suit,val:c.val})),
+    }:null,
+    passes:s.passes,
+    over:s.over,
+    winnerTeam:s.winnerTeam,
+    winnerIdx:s.winnerIdx,
+    mode:s.mode,
+    nSlots:s.nSlots,
+    loneWolfSlot:s.loneWolfSlot,
+  };
 }
-function log(msg){const el=document.getElementById('log');el.textContent+=msg+'\n';el.scrollTop=el.scrollHeight;}
-let flashT=null;
-function flash(msg){const el=document.getElementById('msg');el.textContent=msg;if(flashT)clearTimeout(flashT);flashT=setTimeout(()=>{el.textContent='';},1500);}
+function applySnapshot(snap){
+  N_SLOTS=snap.nSlots;
+  GAME_MODE=snap.mode;
+  loneWolfSlot=snap.loneWolfSlot;
+  const cardsMap=c=>c;
+  state={
+    hands:snap.hands.map(h=>h.map(cardsMap)),
+    current:snap.current,
+    lastPlay:snap.lastPlay?{
+      player:snap.lastPlay.player,
+      combo:snap.lastPlay.combo,
+      cards:snap.lastPlay.cards.map(cardsMap),
+    }:null,
+    passes:snap.passes,
+    over:snap.over,
+    winnerTeam:snap.winnerTeam,
+    winnerIdx:snap.winnerIdx,
+    mode:snap.mode,
+    nSlots:snap.nSlots,
+    loneWolfSlot:snap.loneWolfSlot,
+    selected: new Set(),
+  };
+  render();
+  if(state.over){
+    flash(describeWin());
+  }
+}
 
-function tryPlay(idx,cards){const c=detectCombo(cards);if(!c)return null;if(!canBeat(c,state.lastPlay?state.lastPlay.combo:null))return null;return c;}
-function commitPlay(idx,cards,combo){
+let flashT=null;
+function flash(msg){const el=document.getElementById('msg');el.textContent=msg;if(flashT)clearTimeout(flashT);flashT=setTimeout(()=>{el.textContent='';},2500);}
+
+function tryPlay(idx,cards){
+  const c=detectCombo(cards);
+  if(!c)return null;
+  if(!canBeat(c,state.lastPlay?state.lastPlay.combo:null))return null;
+  return c;
+}
+function describeWin(){
+  if(!state||!state.over)return '';
+  const name=slotName(state.winnerIdx);
+  if(GAME_MODE==='2') return name+' 获胜！';
+  if(GAME_MODE==='3'){
+    if(state.winnerTeam==='A') return '独狼('+name+') 获胜！';
+    return '队友组 获胜！（'+name+' 出完牌）';
+  }
+  return state.winnerTeam+'队 获胜！（'+name+' 出完牌）';
+}
+
+// 非 host 玩家向 host 请求动作
+function reqPlay(idx,cardsIdx){
+  if(!lobby.peer||!lobby.hostId)return;
+  send({to:lobby.hostId, msg:{type:'play', idx, cardsIdx}});
+}
+function reqPass(idx){
+  if(!lobby.peer||!lobby.hostId)return;
+  send({to:lobby.hostId, msg:{type:'pass', idx}});
+}
+
+// host 真正执行
+function commitPlayRaw(idx,cards,combo){
   const hand=state.hands[idx];
-  for(const c of cards)hand.splice(hand.indexOf(c),1);
+  for(const c of cards){
+    const j=hand.findIndex(x=>x.val===c.val&&x.suit===c.suit&&x.rank===c.rank);
+    if(j>=0)hand.splice(j,1);
+  }
   state.selected.clear();
   state.lastPlay={player:idx,combo,cards};
   state.passes=0;
-  log(NAMES[idx]+' 出 '+COMBO_NAME[combo.type]+': '+cards.map(cardText).join(' '));
   if(hand.length===0){
     state.over=true;
-    log('>>> '+NAMES[idx]+' 出完所有牌，获胜！<<<');
-    render();return;
+    state.winnerIdx=idx;
+    state.winnerTeam=teamOf(idx);
+    return;
   }
-  state.current=(idx+1)%3;
-  render();
-  if(IS_AI[state.current])setTimeout(()=>takeTurn(state.current),800);
+  state.current=(idx+1)%N_SLOTS;
 }
-function passTurn(idx){
+function passTurnRaw(idx){
+  if(!state.lastPlay)return;
   state.passes++;
-  log(NAMES[idx]+' 不要');
-  if(state.passes>=2){
+  const needPass=N_SLOTS-1;
+  if(state.passes>=needPass){
     const leader=state.lastPlay.player;
     state.lastPlay=null;state.passes=0;state.current=leader;
-    log('两家不要，'+NAMES[leader]+' 自由出牌。');
   }else{
-    state.current=(idx+1)%3;
+    state.current=(idx+1)%N_SLOTS;
   }
-  render();
-  if(!state.over&&IS_AI[state.current])setTimeout(()=>takeTurn(state.current),800);
-}
-function takeTurn(idx){
-  if(state.over)return;
-  const leading=!state.lastPlay;
-  const play=aiPlay(state.hands[idx],state.lastPlay?state.lastPlay.combo:null,leading);
-  if(play){
-    const combo=tryPlay(idx,play);
-    if(combo){commitPlay(idx,play,combo);return;}
-  }
-  passTurn(idx);
 }
 
-function toggleSelect(i){
-  if(state.over||state.current!==0)return;
-  if(state.selected.has(i))state.selected.delete(i);else state.selected.add(i);
-  render();
+// ===== 联机相关 =====
+let lobby={
+  peer:null,
+  host:false,
+  hostId:null,
+  roomId:null,
+  peers:{}, // pid -> conn
+  players:{}, // pid -> {name, slot, ready}
+  slotAssigned:-1,
+  inGame:false,
+};
+
+function setPeerStatus(t){document.getElementById('peerStatus').textContent=t;}
+function getModeSel(){const el=document.getElementById('modeSel');return el?el.value:'3';}
+function syncModeSel(){
+  const el=document.getElementById('modeSel');
+  if(el&&el.value!==GAME_MODE) el.value=GAME_MODE;
 }
-function humanPlay(){
-  if(state.over||state.current!==0)return;
-  const cards=[...state.selected].sort((a,b)=>a-b).map(i=>state.hands[0][i]);
-  if(!cards.length){flash('请先选牌');return;}
-  const combo=tryPlay(0,cards);
-  if(!combo){flash('牌型不合法或打不过上家');return;}
-  commitPlay(0,cards,combo);
+function slotName(i){
+  if(i<0)return '?';
+  for(const pid in lobby.players)if(lobby.players[pid].slot===i)return lobby.players[pid].name;
+  return '位置'+i;
 }
-function humanPass(){
-  if(state.over||state.current!==0)return;
-  if(!state.lastPlay){flash('你需要出牌');return;}
-  state.selected.clear();
-  passTurn(0);
+function mySlot(){return lobby.slotAssigned;}
+
+function send({to,msg}){
+  if(lobby.peers[to]){try{lobby.peers[to].send(msg);}catch(e){}}
 }
-function humanHint(){
-  if(state.over||state.current!==0)return;
-  const leading=!state.lastPlay;
-  const play=aiPlay(state.hands[0],state.lastPlay?state.lastPlay.combo:null,leading);
-  if(!play){flash('无牌可压');return;}
-  state.selected.clear();
-  for(const c of play){const i=state.hands[0].indexOf(c);if(i>=0)state.selected.add(i);}
-  render();
+function sendAll(msg){for(const p in lobby.peers){send({to:p,msg});}}
+function hostAssignSlots(){
+  const pids=Object.keys(lobby.players);
+  const bySlot={};
+  pids.forEach(p=>{const s=lobby.players[p].slot;if(s>=0&&s<N_SLOTS)bySlot[s]=p;});
+  for(const p of pids){
+    if(lobby.players[p].slot<0||lobby.players[p].slot>=N_SLOTS){
+      for(let s=0;s<N_SLOTS;s++){if(!bySlot[s]){bySlot[s]=p;lobby.players[p].slot=s;break;}}
+    }
+    lobby.players[p].name='玩家'+(lobby.players[p].slot+1);
+    if(p===lobby.peer.id)lobby.players[p].name='你';
+  }
+  // 清理超出 slot 的玩家
+  for(const p of [...pids]){if(lobby.players[p].slot>=N_SLOTS)delete lobby.players[p];}
+}
+function broadcastSlots(){
+  hostAssignSlots();
+  const hostPid=lobby.peer.id;
+  lobby.slotAssigned=lobby.players[hostPid]?lobby.players[hostPid].slot:-1;
+  const payload={type:'slots',players:JSON.parse(JSON.stringify(lobby.players)),hostId:hostPid,nSlots:N_SLOTS,mode:GAME_MODE};
+  sendAll(payload);
+  renderLobby();
+}
+
+function handleMessage(from,msg){
+  if(!msg||!msg.type)return;
+  if(msg.type==='hello'){
+    if(!lobby.host)return;
+    lobby.players[from]=lobby.players[from]||{name:'玩家?',slot:-1,ready:false};
+    if(msg.name)lobby.players[from].name=msg.name;
+    broadcastSlots();
+  } else if(msg.type==='slots'){
+    if(msg.nSlots)N_SLOTS=msg.nSlots;
+    if(msg.mode)GAME_MODE=msg.mode;
+    syncModeSel();
+    lobby.players=JSON.parse(JSON.stringify(msg.players));
+    lobby.hostId=msg.hostId;
+    const myPid=lobby.peer.id;
+    lobby.slotAssigned = lobby.players[myPid]?lobby.players[myPid].slot:-1;
+    // 重命名自己为「你」
+    if(lobby.slotAssigned>=0 && lobby.players[myPid]){
+      lobby.players[myPid].name='你';
+      if(lobby.host)broadcastSlots();
+    }
+    renderLobby();
+  } else if(msg.type==='ready'){
+    if(!lobby.host)return;
+    if(lobby.players[from]){lobby.players[from].ready=!!msg.ready;}
+    broadcastSlots();
+  } else if(msg.type==='start'){
+    N_SLOTS=msg.init.nSlots;
+    GAME_MODE=msg.init.mode;
+    syncModeSel();
+    enterGame(msg.init,msg.seed);
+  } else if(msg.type==='snapshot'){
+    applySnapshot(msg.state);
+  } else if(msg.type==='play'){
+    if(!lobby.host)return;
+    if(!state||state.over||state.current!==msg.idx)return;
+    const hand=state.hands[msg.idx];
+    const cards=(msg.cardsIdx||[]).map(i=>hand[i]).filter(c=>c);
+    if(cards.length!==(msg.cardsIdx||[]).length)return;
+    const combo=tryPlay(msg.idx,cards);
+    if(!combo)return;
+    commitPlayRaw(msg.idx,cards,combo);
+    afterAnyTurn();
+  } else if(msg.type==='pass'){
+    if(!lobby.host)return;
+    if(!state||state.over||state.current!==msg.idx)return;
+    if(!state.lastPlay)return;
+    passTurnRaw(msg.idx);
+    afterAnyTurn();
+  } else if(msg.type==='restart_req'){
+    if(!lobby.host)return;
+    // 所有人都返回大厅后，房主可再次start
+  }
+}
+
+function afterAnyTurn(){
+  if(lobby.host){
+    sendAll({type:'snapshot',state:serializeState(state)});
+    render();
+    if(state.over){
+      flash(describeWin());
+      return;
+    }
+  } else {
+    render();
+    if(state.over) flash(describeWin());
+  }
+}
+
+function startNewGame(){
+  // 仅 host 调用
+  const deck=shuffle(createDeck());
+  const hands=[];
+  for(let i=0;i<N_SLOTS;i++)hands.push([]);
+  for(let i=0;i<deck.length;i++)hands[i%N_SLOTS].push(deck[i]);
+  hands.forEach(sortHand);
+  let first=0;
+  for(let i=0;i<N_SLOTS;i++)if(hands[i].some(c=>c.val===3&&c.suit==='♠')){first=i;break;}
+  assignTeams(hands);
+  state={
+    hands,current:first,lastPlay:null,passes:0,selected:new Set(),
+    over:false,winnerTeam:null,winnerIdx:null,
+    mode:GAME_MODE,nSlots:N_SLOTS,loneWolfSlot:loneWolfSlot,
+  };
+  lobby.inGame=true;
+  const init=serializeState(state);
+  sendAll({type:'start', init, seed:Date.now()});
+  enterGame(init,Date.now());
+}
+
+function enterGame(init,seed){
+  N_SLOTS=init.nSlots;
+  GAME_MODE=init.mode;
+  loneWolfSlot=init.loneWolfSlot;
+  syncModeSel();
+  applySnapshot(init);
+  document.getElementById('lobby').style.display='none';
+  document.getElementById('game').style.display='block';
+}
+function backToLobby(){
+  if(lobby.host){
+    // 重置玩家准备状态
+    for(const p in lobby.players)lobby.players[p].ready=false;
+    broadcastSlots();
+  }
+  document.getElementById('lobby').style.display='block';
+  document.getElementById('game').style.display='none';
+  state=null;
+  renderLobby();
+}
+
+// ===== 渲染 =====
+function renderLobby(){
+  const pl=document.getElementById('playerList');
+  if(!Object.keys(lobby.players).length){pl.innerHTML='<div class="help">尚未加入房间</div>';}
+  else{
+    const arr=Object.entries(lobby.players).sort((a,b)=>(a[1].slot<0?99:a[1].slot)-(b[1].slot<0?99:b[1].slot));
+    const myPid=lobby.peer?lobby.peer.id:null;
+    let h='';
+    for(const [pid,p] of arr){
+      const me=(pid===myPid)?' <span class="me">(你)</span>':'';
+      const host=(pid===lobby.hostId)?' <span class="cur">房主</span>':'';
+      const ready=p.ready?' ✓ 已准备':'';
+      const t=(p.slot>=0)?' [位置'+p.slot+']':'';
+      h+='<div class="info">'+p.name+t+me+host+ready+'</div>';
+    }
+    pl.innerHTML=h;
+  }
+  const mode=GAME_MODE;
+  document.getElementById('btnReady').disabled=(!lobby.peer)||lobby.host||lobby.slotAssigned<0;
+  const readyArr=Object.values(lobby.players);
+  const allReady=readyArr.filter(p=>p.slot>=0).every(p=>p.ready||(lobby.peer&&lobby.players[lobby.peer.id]&&p.slot===lobby.players[lobby.peer.id].slot));
+  const enough=readyArr.filter(p=>p.slot>=0).length===N_SLOTS;
+  const btnStart=document.getElementById('btnStart');
+  btnStart.disabled=!(lobby.host)||!enough||!allReady;
+  if(btnStart.disabled&&lobby.host){
+    if(!enough) btnStart.title='需要 '+N_SLOTS+' 位玩家就位';
+    else btnStart.title='所有玩家需点击准备';
+  }else btnStart.title='';
 }
 
 function render(){
+  if(!state)return;
+  const mySlotIdx=mySlot();
   const opp=document.getElementById('opponents');
   let h='';
-  for(let i=1;i<3;i++){
+  for(let i=0;i<N_SLOTS;i++){
+    if(i===mySlotIdx)continue;
     const cur=state.current===i&&!state.over;
-    h+='<div class="info">'+NAMES[i]+': '+state.hands[i].length+' 张'+(cur?'  <span class="cur">◀ 当前</span>':'')+'</div>';
+    let teamTxt='';
+    if(GAME_MODE==='3'&&i===state.loneWolfSlot)teamTxt=' <span class="lone">[独狼]</span>';
+    else if(GAME_MODE==='4'){
+      const c=(teamOf(i)==='A')?'teamA':'teamB';
+      teamTxt=' <span class="'+c+'">['+teamLabel(i)+']</span>';
+    } else if(GAME_MODE==='2'){
+      const c=(teamOf(i)==='A')?'teamA':'teamB';
+      teamTxt=' <span class="'+c+'">['+teamLabel(i)+']</span>';
+    }
+    h+='<div class="info">位置'+i+' · '+slotName(i)+': '+state.hands[i].length+' 张'+teamTxt+(cur?'  <span class="cur">◀ 当前</span>':'')+'</div>';
   }
-  h+='<div class="info">'+NAMES[0]+'(你): '+state.hands[0].length+' 张'+(state.current===0&&!state.over?'  <span class="cur">◀ 当前</span>':'')+'</div>';
+  if(mySlotIdx>=0){
+    const cur=state.current===mySlotIdx&&!state.over;
+    let teamTxt='';
+    if(GAME_MODE==='3'&&mySlotIdx===state.loneWolfSlot)teamTxt=' <span class="lone">[独狼]</span>';
+    else if(GAME_MODE==='4'){
+      const c=(teamOf(mySlotIdx)==='A')?'teamA':'teamB';
+      teamTxt=' <span class="'+c+'">['+teamLabel(mySlotIdx)+']</span>';
+    } else if(GAME_MODE==='2'){
+      const c=(teamOf(mySlotIdx)==='A')?'teamA':'teamB';
+      teamTxt=' <span class="'+c+'">['+teamLabel(mySlotIdx)+']</span>';
+    }
+    h+='<div class="info">位置'+mySlotIdx+' · <span class="me">你</span>: '+state.hands[mySlotIdx].length+' 张'+teamTxt+(cur?'  <span class="cur">◀ 当前</span>':'')+'</div>';
+  }
   opp.innerHTML=h;
   const pa=document.getElementById('playArea');
   if(state.lastPlay){
-    pa.innerHTML='<div>上一手 — '+NAMES[state.lastPlay.player]+' 出 ['+COMBO_NAME[state.lastPlay.combo.type]+']: '+state.lastPlay.cards.map(cardText).join(' ')+'</div>';
+    pa.innerHTML='<div>上一手 — '+slotName(state.lastPlay.player)+' 出 ['+COMBO_NAME[state.lastPlay.combo.type]+']: '+state.lastPlay.cards.map(cardText).join(' ')+'</div>';
   }else{
-    pa.innerHTML='<div>'+(state.over?'游戏结束':'自由出牌')+'</div>';
+    pa.innerHTML='<div>'+(state.over?('游戏结束 · '+describeWin()):'自由出牌')+'</div>';
   }
   const mh=document.getElementById('myHand');
-  const mine=state.current===0&&!state.over;
-  let hh='<div>你的手牌:</div><div class="hand">';
-  state.hands[0].forEach((c,i)=>{
+  const myTurn=mySlotIdx>=0&&state.current===mySlotIdx&&!state.over;
+  let hh='<div class="hand">';
+  const hand=(mySlotIdx>=0)?state.hands[mySlotIdx]:[];
+  hand.forEach((c,i)=>{
     const sel=state.selected.has(i);
     const red=RED.has(c.suit);
     hh+='<span class="card'+(red?' red':'')+(sel?' sel':'')+'" data-i="'+i+'">'+cardText(c)+'</span>';
@@ -292,21 +572,179 @@ function render(){
   mh.innerHTML=hh;
   mh.querySelectorAll('.card').forEach(el=>{el.addEventListener('click',()=>toggleSelect(parseInt(el.dataset.i)));});
   const si=document.getElementById('selInfo');
-  const selCards=[...state.selected].sort((a,b)=>a-b).map(i=>state.hands[0][i]).filter(c=>c);
+  const selCards=[...state.selected].sort((a,b)=>a-b).map(i=>hand[i]).filter(c=>c);
   if(selCards.length){
     const cb=detectCombo(selCards);
     si.textContent='已选: '+selCards.map(cardText).join(' ')+(cb?('  ['+COMBO_NAME[cb.type]+']'):'  [无效]');
   }else si.textContent='';
-  document.getElementById('btnPlay').disabled=!mine;
-  document.getElementById('btnPass').disabled=(!mine)||(!state.lastPlay);
-  document.getElementById('btnHint').disabled=!mine;
+  document.getElementById('btnPlay').disabled=!myTurn;
+  document.getElementById('btnPass').disabled=(!myTurn)||(!state.lastPlay);
+  document.getElementById('btnHint').disabled=!myTurn;
 }
 
+function toggleSelect(i){
+  const m=mySlot();
+  if(state.over||m<0||state.current!==m)return;
+  if(state.selected.has(i))state.selected.delete(i);else state.selected.add(i);
+  render();
+}
+function humanPlay(){
+  const m=mySlot();
+  if(state.over||m<0||state.current!==m)return;
+  const cards=[...state.selected].sort((a,b)=>a-b).map(i=>state.hands[m][i]);
+  if(!cards.length){flash('请先选牌');return;}
+  const combo=tryPlay(m,cards);
+  if(!combo){flash('牌型不合法或打不过上家');return;}
+  if(lobby.host){
+    commitPlayRaw(m,cards,combo);
+    afterAnyTurn();
+  }else{
+    reqPlay(m,[...state.selected].sort((a,b)=>a-b));
+  }
+}
+function humanPass(){
+  const m=mySlot();
+  if(state.over||m<0||state.current!==m)return;
+  if(!state.lastPlay){flash('你需要出牌');return;}
+  state.selected.clear();
+  if(lobby.host){
+    passTurnRaw(m);
+    afterAnyTurn();
+  }else{
+    reqPass(m);
+  }
+}
+function humanHint(){
+  const m=mySlot();
+  if(state.over||m<0||state.current!==m)return;
+  const leading=!state.lastPlay;
+  const play=findHint(state.hands[m],state.lastPlay?state.lastPlay.combo:null,leading);
+  if(!play){flash('无牌可压');return;}
+  state.selected.clear();
+  for(const c of play){
+    const i=state.hands[m].findIndex(x=>x.val===c.val&&x.suit===c.suit&&x.rank===c.rank);
+    if(i>=0)state.selected.add(i);
+  }
+  render();
+}
+
+// ===== 事件 =====
 document.getElementById('btnPlay').addEventListener('click',humanPlay);
 document.getElementById('btnPass').addEventListener('click',humanPass);
 document.getElementById('btnHint').addEventListener('click',humanHint);
-document.getElementById('btnNew').addEventListener('click',newGame);
-newGame();
+document.getElementById('btnBack').addEventListener('click',backToLobby);
+document.getElementById('modeSel').addEventListener('change',()=>{
+  GAME_MODE=getModeSel();
+  N_SLOTS=parseInt(GAME_MODE)||3;
+  if(lobby.host && lobby.peer){
+    for(const pid in lobby.players){
+      if(lobby.players[pid].slot>=N_SLOTS) delete lobby.players[pid];
+    }
+    broadcastSlots();
+  } else {
+    renderLobby();
+  }
+});
+
+document.getElementById('btnReady').addEventListener('click',()=>{
+  if(!lobby.peer)return;
+  if(lobby.slotAssigned<0)return;
+  const myPid=lobby.peer.id;
+  if(lobby.players[myPid]){
+    lobby.players[myPid].ready=!lobby.players[myPid].ready;
+    send({to:lobby.hostId,msg:{type:'ready',ready:lobby.players[myPid].ready}});
+    renderLobby();
+  }
+});
+
+document.getElementById('btnStart').addEventListener('click',()=>{
+  if(!lobby.host)return;
+  // 确认所有 slot 已分配且都准备了
+  const slotsUsed=new Set();
+  let ok=true;
+  for(const p in lobby.players){
+    if(lobby.players[p].slot>=0){slotsUsed.add(lobby.players[p].slot);if(!lobby.players[p].ready && p!==lobby.peer.id){ok=false;}}
+  }
+  if(slotsUsed.size!==N_SLOTS){flash('玩家人数不足');return;}
+  if(!ok){flash('有人未准备');return;}
+  // 房主自己算 ready
+  startNewGame();
+});
+
+function randId(n){const s='abcdefghijklmnopqrstuvwxyz0123456789';let r='';for(let i=0;i<n;i++)r+=s[Math.floor(Math.random()*s.length)];return r;}
+
+document.getElementById('btnCreate').addEventListener('click',()=>{
+  GAME_MODE=getModeSel();N_SLOTS=parseInt(GAME_MODE)||3;
+  let rid=document.getElementById('roomId').value.trim();
+  if(!rid){rid=randId(6);document.getElementById('roomId').value=rid;}
+  if(rid.length<3){flash('房间号3-12字符');return;}
+  lobby.roomId=rid;
+  if(lobby.peer){try{lobby.peer.destroy();}catch(e){}}
+  lobby.peer=new Peer('pdk_'+rid+'_host_'+randId(4),{debug:0});
+  setPeerStatus('连接中...');
+  lobby.peer.on('open',(id)=>{
+    lobby.host=true;lobby.hostId=id;
+    lobby.players={};
+    lobby.players[id]={name:'你',slot:0,ready:true};
+    lobby.slotAssigned=0;
+    setPeerStatus('已创建房间号: '+rid+' (把房间号给其他人加入)');
+    renderLobby();
+  });
+  lobby.peer.on('connection',(conn)=>{
+    conn.on('open',()=>{
+      lobby.peers[conn.peer]=conn;
+      conn.on('data',(msg)=>handleMessage(conn.peer,msg));
+      // 对方会发 hello
+    });
+  });
+  lobby.peer.on('error',(e)=>{setPeerStatus('错误: '+e.message);});
+});
+
+document.getElementById('btnJoin').addEventListener('click',()=>{
+  GAME_MODE=getModeSel();N_SLOTS=parseInt(GAME_MODE)||3;
+  const rid=document.getElementById('roomId').value.trim();
+  if(rid.length<3){flash('请输入房间号');return;}
+  lobby.roomId=rid;
+  if(lobby.peer){try{lobby.peer.destroy();}catch(e){}}
+  lobby.peer=new Peer('pdk_'+rid+'_cli_'+randId(6),{debug:0});
+  setPeerStatus('连接中...');
+  lobby.host=false;lobby.hostId=null;lobby.players={};
+  let gotOpen=false;
+  lobby.peer.on('open',(id)=>{
+    gotOpen=true;
+    // 尝试连接 host id: hostId 用房间号推导不了，所以我们通过 lobby 房间号和 host 建立连接？
+    // 方案：用 broadcast? 不行. 我们让 host 也连一个固定房间号作为 peer id 前缀？
+    // 简化：host 端也会接收连接。client 需要知道 host 的 peer id. 我们让 host 监听连接即可，
+    // 但 host 的 peer id 是随机的. 解决：让 host 以房间号固定后缀作 peer id？
+    // 实际上 peerjs 允许多个连接，所以 client 可以直接连接到房间号本身作为 peer id？
+    // 更简单：我们让 host 的 peerId 格式固定为 pdk_ROOMID_host (没有后缀随机)，
+    // client 直接连接到 pdk_ROOMID_host。
+    const hostPid='pdk_'+rid+'_host_0000';
+    setPeerStatus('正在连接房间 '+rid+' ...');
+    // 尝试连接 host
+    const conn=lobby.peer.connect(hostPid,{reliable:true});
+    conn.on('open',()=>{
+      lobby.peers[hostPid]=conn;
+      lobby.hostId=hostPid;
+      conn.on('data',(msg)=>handleMessage(hostPid,msg));
+      setPeerStatus('已加入房间 '+rid+'，等待房主分配位置');
+      conn.send({type:'hello',name:'玩家?'});
+    });
+    conn.on('error',(e)=>{setPeerStatus('连接房间失败: '+e.message);});
+  });
+  lobby.peer.on('connection',(conn)=>{
+    conn.on('open',()=>{
+      lobby.peers[conn.peer]=conn;
+      conn.on('data',(msg)=>handleMessage(conn.peer,msg));
+    });
+  });
+  lobby.peer.on('error',(e)=>{setPeerStatus('错误: '+e.message);});
+});
+
+// 初始化：默认 3 人模式
+GAME_MODE='3';N_SLOTS=3;syncModeSel();renderLobby();
 </script>
-</body>
-</html>
+
+
+
+</body></html>
