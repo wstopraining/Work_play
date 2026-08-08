@@ -57,11 +57,16 @@ NGINX_CONF='server {
     }
 }'
 
-# 兼容不同 nginx 目录结构
+# 兼容不同 nginx 目录结构，并清理可能冲突的默认配置
+if [ -d /etc/nginx/sites-enabled ]; then
+  rm -f /etc/nginx/sites-enabled/default
+fi
+if [ -d /etc/nginx/conf.d ]; then
+  rm -f /etc/nginx/conf.d/default.conf
+fi
 if [ -d /etc/nginx/sites-available ]; then
   echo "$NGINX_CONF" > /etc/nginx/sites-available/paodekuai
   ln -sf /etc/nginx/sites-available/paodekuai /etc/nginx/sites-enabled/paodekuai
-  rm -f /etc/nginx/sites-enabled/default
 elif [ -d /etc/nginx/conf.d ]; then
   echo "$NGINX_CONF" > /etc/nginx/conf.d/paodekuai.conf
 else
@@ -70,7 +75,7 @@ else
   ln -sf /etc/nginx/sites-available/paodekuai /etc/nginx/sites-enabled/paodekuai
 fi
 
-nginx -t && systemctl reload nginx
+nginx -t && systemctl restart nginx
 
 # 6. 创建 peerjs-server systemd 服务
 echo "创建 PeerJS 服务..."
