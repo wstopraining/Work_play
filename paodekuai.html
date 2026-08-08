@@ -680,7 +680,8 @@ document.getElementById('btnCreate').addEventListener('click',()=>{
   if(rid.length<3){flash('房间号3-12字符');return;}
   lobby.roomId=rid;
   if(lobby.peer){try{lobby.peer.destroy();}catch(e){}}
-  lobby.peer=new Peer('pdk_'+rid+'_host_'+randId(4),{debug:0});
+  const hostPid='pdk_'+rid+'_host_0000';
+  lobby.peer=new Peer(hostPid,{debug:1});
   setPeerStatus('连接中...');
   lobby.peer.on('open',(id)=>{
     lobby.host=true;lobby.hostId=id;
@@ -694,10 +695,13 @@ document.getElementById('btnCreate').addEventListener('click',()=>{
     conn.on('open',()=>{
       lobby.peers[conn.peer]=conn;
       conn.on('data',(msg)=>handleMessage(conn.peer,msg));
-      // 对方会发 hello
     });
   });
-  lobby.peer.on('error',(e)=>{setPeerStatus('错误: '+e.message);});
+  lobby.peer.on('error',(e)=>{
+    if(e.type==='unavailable-id'){setPeerStatus('房间号 "'+rid+'" 已被占用，请换一个房间号');}
+    else if(e.type==='network'){setPeerStatus('网络错误：无法连接 PeerJS 服务器（可能被公司网络封锁）');}
+    else{setPeerStatus('错误['+e.type+']: '+e.message);}
+  });
 });
 
 document.getElementById('btnJoin').addEventListener('click',()=>{
@@ -706,31 +710,33 @@ document.getElementById('btnJoin').addEventListener('click',()=>{
   if(rid.length<3){flash('请输入房间号');return;}
   lobby.roomId=rid;
   if(lobby.peer){try{lobby.peer.destroy();}catch(e){}}
-  lobby.peer=new Peer('pdk_'+rid+'_cli_'+randId(6),{debug:0});
+  lobby.peer=new Peer('pdk_'+rid+'_cli_'+randId(6),{debug:1});
   setPeerStatus('连接中...');
   lobby.host=false;lobby.hostId=null;lobby.players={};
-  let gotOpen=false;
   lobby.peer.on('open',(id)=>{
-    gotOpen=true;
-    // 尝试连接 host id: hostId 用房间号推导不了，所以我们通过 lobby 房间号和 host 建立连接？
-    // 方案：用 broadcast? 不行. 我们让 host 也连一个固定房间号作为 peer id 前缀？
-    // 简化：host 端也会接收连接。client 需要知道 host 的 peer id. 我们让 host 监听连接即可，
-    // 但 host 的 peer id 是随机的. 解决：让 host 以房间号固定后缀作 peer id？
-    // 实际上 peerjs 允许多个连接，所以 client 可以直接连接到房间号本身作为 peer id？
-    // 更简单：我们让 host 的 peerId 格式固定为 pdk_ROOMID_host (没有后缀随机)，
-    // client 直接连接到 pdk_ROOMID_host。
     const hostPid='pdk_'+rid+'_host_0000';
     setPeerStatus('正在连接房间 '+rid+' ...');
-    // 尝试连接 host
     const conn=lobby.peer.connect(hostPid,{reliable:true});
+    let connected=false;
+    const timeout=setTimeout(()=>{
+      if(!connected){
+        setPeerStatus('连接超时：房间 "'+rid+'" 不存在，或房主未点"创建房间"，或网络被封锁');
+      }
+    },8000);
     conn.on('open',()=>{
+      connected=true;
+      clearTimeout(timeout);
       lobby.peers[hostPid]=conn;
       lobby.hostId=hostPid;
       conn.on('data',(msg)=>handleMessage(hostPid,msg));
       setPeerStatus('已加入房间 '+rid+'，等待房主分配位置');
       conn.send({type:'hello',name:'玩家?'});
     });
-    conn.on('error',(e)=>{setPeerStatus('连接房间失败: '+e.message);});
+    conn.on('error',(e)=>{
+      clearTimeout(timeout);
+      if(e.type==='peer-unavailable'){setPeerStatus('房间 "'+rid+'" 不存在或房主未创建房间');}
+      else{setPeerStatus('连接失败['+e.type+']: '+e.message);}
+    });
   });
   lobby.peer.on('connection',(conn)=>{
     conn.on('open',()=>{
@@ -738,7 +744,10 @@ document.getElementById('btnJoin').addEventListener('click',()=>{
       conn.on('data',(msg)=>handleMessage(conn.peer,msg));
     });
   });
-  lobby.peer.on('error',(e)=>{setPeerStatus('错误: '+e.message);});
+  lobby.peer.on('error',(e)=>{
+    if(e.type==='network'){setPeerStatus('网络错误：无法连接 PeerJS 服务器（可能被公司网络封锁）');}
+    else{setPeerStatus('错误['+e.type+']: '+e.message);}
+  });
 });
 
 // 初始化：默认 3 人模式
